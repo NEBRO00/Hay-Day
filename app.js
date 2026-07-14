@@ -11,19 +11,7 @@ const DB_KEYS = {
   categories: 'hd_categories',
   settings: 'hd_settings',
   theme: 'hd_theme',
-  auth: 'hd_auth',
 };
-
-/* Lightweight client-side hash — NOT cryptographic security.
-   This only deters casual visitors from browsing the backend; anyone who can
-   open devtools/view-source on the files can bypass it. For real protection
-   (e.g. a public storefront customers also visit) this page must be served
-   from a real backend with server-side auth. */
-function simpleHash(str) {
-  let hash = 5381;
-  for (let i = 0; i < str.length; i++) hash = ((hash << 5) + hash + str.charCodeAt(i)) | 0;
-  return 'h' + Math.abs(hash).toString(36);
-}
 
 function load(key, fallback) {
   try {
@@ -72,17 +60,19 @@ function ensureSeed() {
   if (!localStorage.getItem(DB_KEYS.customers)) save(DB_KEYS.customers, []);
   if (!localStorage.getItem(DB_KEYS.orders)) save(DB_KEYS.orders, []);
   if (!localStorage.getItem(DB_KEYS.settings)) save(DB_KEYS.settings, { promptpayQr: null, shopName: 'ฟาร์มมี่ช็อป', contactInfo: '' });
-  if (!localStorage.getItem(DB_KEYS.auth)) save(DB_KEYS.auth, { hash: simpleHash('admin1234') });
 }
 ensureSeed();
 
 /* ---------------------- SECTION LOCK (per-view, not whole-app) ---------------------- */
-const AUTH_SESSION_KEY = 'hd_authed';
+/* ระบบ Login Admin จริงผ่าน Supabase Auth (Email/Password) — ข้อ 8
+   Session เก็บในเบราว์เซอร์นี้เท่านั้น (localStorage/sessionStorage ของ Supabase client)
+   จึงไม่มีทางแชร์ไปหาลูกค้าคนอื่นที่เปิดเว็บจากเครื่อง/เบราว์เซอร์อื่น — ข้อ 1 */
 const LOCKED_VIEWS = ['dashboard', 'orders', 'customers', 'products', 'reports', 'settings'];
 let pendingUnlockView = null;
+let currentSession = null; // Supabase session ปัจจุบัน, null = ยังไม่ได้ login เป็น admin
 
 function isAuthed() {
-  return localStorage.getItem(AUTH_SESSION_KEY) === '1' || sessionStorage.getItem(AUTH_SESSION_KEY) === '1';
+  return !!currentSession;
 }
 function applyUnlockedUI(unlocked) {
   document.body.classList.toggle('admin-unlocked', unlocked);
@@ -90,40 +80,55 @@ function applyUnlockedUI(unlocked) {
 }
 function openUnlockModal(viewToOpen) {
   pendingUnlockView = viewToOpen;
+  document.getElementById('unlockEmail').value = '';
   document.getElementById('unlockPassword').value = '';
   document.getElementById('unlockError').classList.add('hidden');
   document.getElementById('unlockBackdrop').classList.remove('hidden');
-  setTimeout(() => document.getElementById('unlockPassword')?.focus(), 50);
+  setTimeout(() => document.getElementById('unlockEmail')?.focus(), 50);
 }
 function closeUnlockModal() {
   document.getElementById('unlockBackdrop').classList.add('hidden');
   pendingUnlockView = null;
 }
 
-document.getElementById('unlockForm').addEventListener('submit', e => {
+document.getElementById('unlockForm').addEventListener('submit', async e => {
   e.preventDefault();
+  const email = document.getElementById('unlockEmail').value.trim();
   const pw = document.getElementById('unlockPassword').value;
-  const auth = load(DB_KEYS.auth, {});
-  if (simpleHash(pw) === auth.hash) {
-    const remember = document.getElementById('unlockRemember').checked;
-    (remember ? localStorage : sessionStorage).setItem(AUTH_SESSION_KEY, '1');
-    applyUnlockedUI(true);
-    const target = pendingUnlockView;
-    closeUnlockModal();
-    if (target) goToView(target);
-  } else {
+  const remember = document.getElementById('unlockRemember').checked;
+  localStorage.setItem('hd_admin_remember', remember ? '1' : '0');
+
+  const submitBtn = e.target.querySelector('button[type="submit"]');
+  submitBtn.disabled = true;
+  const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password: pw });
+  submitBtn.disabled = false;
+
+  if (error || !data.session) {
     document.getElementById('unlockError').classList.remove('hidden');
+    return;
   }
+  currentSession = data.session;
+  applyUnlockedUI(true);
+  const target = pendingUnlockView;
+  closeUnlockModal();
+  if (target) goToView(target);
 });
 document.getElementById('unlockCancelBtn').addEventListener('click', closeUnlockModal);
 
-document.getElementById('logoutBtn').addEventListener('click', () => {
+document.getElementById('logoutBtn').addEventListener('click', async () => {
   if (!confirm('ล็อกส่วนหลังบ้านอีกครั้งใช่หรือไม่? คุณจะกลับไปหน้า "ขายสินค้า"')) return;
-  localStorage.removeItem(AUTH_SESSION_KEY);
-  sessionStorage.removeItem(AUTH_SESSION_KEY);
+  await supabaseClient.auth.signOut();
+  currentSession = null;
   applyUnlockedUI(false);
   closeSidebarMobile();
   goToView('pos');
+});
+
+/* ให้ทุกที่ในแอปรู้ทันทีเมื่อสถานะ login เปลี่ยน (ครอบคลุมตอนโหลดหน้าครั้งแรกที่ยังมี
+   session ค้างอยู่ด้วย — Admin ไม่ต้อง login ซ้ำถ้ายังไม่ logout ตามข้อ 8) */
+supabaseClient.auth.onAuthStateChange((_event, session) => {
+  currentSession = session;
+  applyUnlockedUI(!!session);
 });
 
 /* ---------------------- STATE ---------------------- */
@@ -437,8 +442,10 @@ function selectCustomer(customerId) {
   if (!c) return;
   document.getElementById('custName').value = c.name;
   document.getElementById('custTag').value = c.farmTag || '';
-  document.getElementById('custPhone').value = c.phone || '';
-  document.getElementById('custNote').value = c.note || '';
+  const phoneInput = document.getElementById('custPhone');
+  if (phoneInput) phoneInput.value = c.phone || '';
+  const noteInput = document.getElementById('custNote');
+  if (noteInput) noteInput.value = c.note || '';
   document.getElementById('custAutofill').innerHTML = '';
   state.matchedCustomer = c;
   showCustomerHint(c);
@@ -473,18 +480,22 @@ function confirmOrder() {
   if (!state.cart.length) { toast('⚠️ ตะกร้าสินค้าว่างเปล่า'); return; }
 
   const farmTag = document.getElementById('custTag').value.trim();
-  const phone = document.getElementById('custPhone').value.trim();
-  const note = document.getElementById('custNote').value.trim();
+  const phoneInput = document.getElementById('custPhone');
+  const noteInput = document.getElementById('custNote');
+  const phone = phoneInput ? phoneInput.value.trim() : '';
+  const note = noteInput ? noteInput.value.trim() : '';
 
   const customers = load(DB_KEYS.customers, []);
   let customer = state.matchedCustomer || customers.find(c => c.name.toLowerCase() === name.toLowerCase() && (farmTag ? c.farmTag === farmTag : true));
   if (!customer) {
-    customer = { id: uid('c'), name, farmTag, phone, note, createdAt: new Date().toISOString() };
+    customer = { id: uid('c'), name, farmTag, createdAt: new Date().toISOString() };
+    if (phone) customer.phone = phone;
+    if (note) customer.note = note;
     customers.push(customer);
   } else {
     customer.farmTag = farmTag || customer.farmTag;
-    customer.phone = phone || customer.phone;
-    customer.note = note || customer.note;
+    if (phone) customer.phone = phone;
+    if (note) customer.note = note;
   }
   save(DB_KEYS.customers, customers);
 
@@ -922,17 +933,23 @@ function renderSettings() {
   preview.innerHTML = settings.promptpayQr ? `<img src="${settings.promptpayQr}" alt="PromptPay QR">` : `<p class="hint-text">ยังไม่มี QR</p>`;
 }
 
-document.getElementById('changePasswordBtn').addEventListener('click', () => {
+document.getElementById('changePasswordBtn').addEventListener('click', async () => {
   const current = document.getElementById('currentPassword').value;
   const next = document.getElementById('newPassword').value;
   const confirmPw = document.getElementById('confirmPassword').value;
-  const auth = load(DB_KEYS.auth, {});
 
-  if (simpleHash(current) !== auth.hash) { toast('⚠️ รหัสผ่านปัจจุบันไม่ถูกต้อง'); return; }
-  if (next.length < 4) { toast('⚠️ รหัสผ่านใหม่ต้องมีอย่างน้อย 4 ตัว'); return; }
+  if (!currentSession) { toast('⚠️ กรุณาเข้าสู่ระบบก่อน'); return; }
+  if (next.length < 6) { toast('⚠️ รหัสผ่านใหม่ต้องมีอย่างน้อย 6 ตัว (ข้อกำหนดของ Supabase)'); return; }
   if (next !== confirmPw) { toast('⚠️ รหัสผ่านใหม่ไม่ตรงกัน'); return; }
 
-  save(DB_KEYS.auth, { hash: simpleHash(next) });
+  // ยืนยันตัวตนด้วยรหัสผ่านปัจจุบันก่อน (Supabase ไม่มี API เช็ครหัสตรงๆ จึงลอง sign-in ซ้ำ)
+  const email = currentSession.user.email;
+  const { error: verifyError } = await supabaseClient.auth.signInWithPassword({ email, password: current });
+  if (verifyError) { toast('⚠️ รหัสผ่านปัจจุบันไม่ถูกต้อง'); return; }
+
+  const { error: updateError } = await supabaseClient.auth.updateUser({ password: next });
+  if (updateError) { toast('⚠️ เปลี่ยนรหัสผ่านไม่สำเร็จ: ' + updateError.message); return; }
+
   document.getElementById('currentPassword').value = '';
   document.getElementById('newPassword').value = '';
   document.getElementById('confirmPassword').value = '';
