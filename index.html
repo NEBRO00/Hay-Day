@@ -17,6 +17,7 @@
     <h2>ส่วนนี้ล็อกไว้</h2>
     <p>สำหรับเจ้าของร้านเท่านั้น ใส่รหัสผ่านเพื่อเข้าใช้งาน</p>
     <form id="unlockForm">
+      <input type="email" id="unlockEmail" placeholder="อีเมล" autocomplete="username">
       <input type="password" id="unlockPassword" placeholder="รหัสผ่าน" autocomplete="current-password">
       <label class="remember-row">
         <input type="checkbox" id="unlockRemember" checked> จดจำการปลดล็อกบนอุปกรณ์นี้
@@ -71,7 +72,7 @@
       <button class="hamburger" id="hamburger">☰</button>
       <h1 id="pageTitle">ขายสินค้า</h1>
       <div class="search-wrap">
-        <input type="text" id="globalSearch" placeholder="🔍 ค้นหาสินค้า, ลูกค้า, Tag...">
+        <input type="text" id="globalSearch" placeholder=" ">
         <div class="search-results" id="searchResults"></div>
       </div>
     </header>
@@ -137,12 +138,7 @@
               <label>Tag ฟาร์ม
                 <input type="text" id="custTag" placeholder="@123456789">
               </label>
-              <label>เบอร์โทร (ถ้ามี)
-                <input type="text" id="custPhone" placeholder="08x-xxx-xxxx">
-              </label>
-              <label>หมายเหตุ
-                <input type="text" id="custNote" placeholder="เช่น ลูกค้าประจำ ส่งไว">
-              </label>
+
               <div class="cust-history-hint" id="custHistoryHint"></div>
             </div>
 
@@ -307,7 +303,7 @@
           <p class="hint-text">เปลี่ยนรหัสผ่านสำหรับเข้าหน้าหลังบ้าน (ป้องกันไม่ให้คนอื่นเข้ามาเห็นระบบ)</p>
           <div class="password-form">
             <input type="password" id="currentPassword" placeholder="รหัสผ่านปัจจุบัน" autocomplete="current-password">
-            <input type="password" id="newPassword" placeholder="รหัสผ่านใหม่ (อย่างน้อย 4 ตัว)" autocomplete="new-password">
+            <input type="password" id="newPassword" placeholder="รหัสผ่านใหม่ (อย่างน้อย 6 ตัว)" autocomplete="new-password">
             <input type="password" id="confirmPassword" placeholder="ยืนยันรหัสผ่านใหม่" autocomplete="new-password">
             <button class="btn-primary" id="changePasswordBtn">💾 เปลี่ยนรหัสผ่าน</button>
           </div>
@@ -373,6 +369,8 @@
 
 <div class="toast" id="toast"></div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="supabaseClient.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
